@@ -1,0 +1,101 @@
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { git, repositoryName, resolveProject, run, syncWiki, trustedRepoPath } from '../src/core.mjs';
+
+test('project URLs resolve to an exact GitHub repository', () => {
+  assert.equal(repositoryName('https://github.com/acme/ready.git'), 'acme/ready');
+  assert.equal(repositoryName('git@github.com:acme/ready.git'), 'acme/ready');
+  assert.throws(() => repositoryName('https://github.com.evil.invalid/acme/ready'));
+  assert.throws(() => repositoryName('https://user:pass@github.com/acme/ready'));
+  assert.throws(() => trustedRepoPath('wiki/test.md:other'));
+  assert.throws(() => trustedRepoPath('wiki/../other.md'));
+});
+
+test('wiki sync pins a coherent remote snapshot without changing the worktree and marks offline cache stale', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'superwiki-core-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const remote = join(root, 'remote');
+  const member = join(root, 'member');
+  const work = (path, ...args) => {
+    const result = spawnSync('git', args, { cwd: path, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  work(root, 'init', '-b', 'main', remote);
+  work(remote, 'config', 'user.name', 'SuperWiki Test');
+  work(remote, 'config', 'user.email', 'superwiki@example.invalid');
+  mkdirSync(join(remote, 'wiki'));
+  writeFileSync(join(remote, 'wiki', 'index.md'), '# First\n');
+  writeFileSync(join(remote, 'wiki', 'removed.md'), '# To be removed\n');
+  work(remote, 'add', 'wiki');
+  work(remote, 'commit', '-m', 'Initial wiki');
+  work(root, 'clone', remote, member);
+  writeFileSync(join(member, 'wiki', 'index.md'), 'local edit');
+  const state = join(member, '.superwiki', 'state');
+  const project = { root: member, state, branch: 'main', repo: 'acme/ready' };
+  const first = syncWiki(project);
+  assert.equal(readFileSync(join(first.path, 'index.md'), 'utf8'), '# First\n');
+  writeFileSync(join(remote, 'wiki', 'index.md'), '# New\n');
+  rmSync(join(remote, 'wiki', 'removed.md'));
+  work(remote, 'add', '-A');
+  work(remote, 'commit', '-m', 'Update wiki');
+  const second = syncWiki(project);
+  assert.notEqual(first.sha, second.sha);
+  assert.equal(readFileSync(join(second.path, 'index.md'), 'utf8'), '# New\n');
+  assert.equal(existsSync(join(second.path, 'removed.md')), false);
+  assert.equal(readFileSync(join(first.path, 'index.md'), 'utf8'), '# First\n');
+  assert.equal(readFileSync(join(member, 'wiki', 'index.md'), 'utf8'), 'local edit');
+  work(remote, 'switch', '-c', 'trunk');
+  writeFileSync(join(remote, 'wiki', 'index.md'), '# Trunk\n');
+  work(remote, 'add', 'wiki');
+  work(remote, 'commit', '-m', 'New default branch');
+  const third = syncWiki(project);
+  assert.equal(readFileSync(join(third.path, 'index.md'), 'utf8'), '# Trunk\n');
+  assert.equal(work(member, 'symbolic-ref', 'refs/remotes/origin/HEAD'), 'refs/remotes/origin/trunk');
+  work(member, 'remote', 'set-url', 'origin', join(root, 'absent'));
+  const stale = syncWiki(project, { allowStale: true });
+  assert.equal(stale.sha, third.sha);
+  assert.equal(stale.stale, true);
+});
+
+test('command runner returns unchanged file bytes when requested', () => {
+  assert.equal(run(process.execPath, ['-e', 'process.stdout.write(" a\\n")'], { raw: true }).toString(), ' a\n');
+});
+
+test('a local project can read its bound Wiki without changing its source origin or branch', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'superwiki-binding-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const wiki = join(root, 'wiki-upstream');
+  const source = join(root, 'source');
+  const mirror = join(source, '.superwiki', 'wiki-git');
+  const wikiRemote = 'https://github.com/team/knowledge.git';
+  const sourceRemote = 'git@github.com:team/product.git';
+  const work = (cwd, ...args) => run('git', args, { cwd });
+  work(root, 'init', '-b', 'main', wiki);
+  mkdirSync(join(wiki, 'wiki'));
+  writeFileSync(join(wiki, 'wiki', 'index.md'), '# Project Wiki\n');
+  writeFileSync(join(wiki, 'superwiki.toml'), '[project]\ncurator_login = "maintainer"\n');
+  work(wiki, 'add', 'wiki', 'superwiki.toml');
+  work(wiki, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Wiki');
+  work(root, 'init', '-b', 'product', source);
+  work(source, 'remote', 'add', 'origin', sourceRemote);
+  mkdirSync(join(source, '.superwiki'));
+  work(source, 'clone', '--no-checkout', wiki, mirror);
+  work(mirror, 'remote', 'set-url', 'origin', wikiRemote);
+  work(mirror, 'config', 'url.' + wiki.replaceAll('\\', '/') + '.insteadOf', wikiRemote);
+  writeFileSync(join(source, '.superwiki', 'config.toml'), '[wiki]\nremote = "' + wikiRemote + '"\n');
+  mkdirSync(join(source, 'src'));
+  const project = resolveProject(join(source, 'src'));
+  assert.equal(project.repo, 'team/knowledge');
+  assert.equal(project.root, source);
+  assert.equal(project.curatorLogin, 'maintainer');
+  assert.equal(git(project, ['config', 'remote.origin.url']), wikiRemote);
+  const snapshot = syncWiki(project);
+  assert.equal(readFileSync(join(snapshot.path, 'index.md'), 'utf8'), '# Project Wiki\n');
+  assert.equal(work(source, 'remote', 'get-url', 'origin'), sourceRemote);
+  assert.equal(work(source, 'symbolic-ref', '--short', 'HEAD'), 'product');
+});

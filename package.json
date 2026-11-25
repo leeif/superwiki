@@ -1,0 +1,12 @@
+{
+  "name": "superwiki",
+  "version": "0.1.4",
+  "description": "Project memory and GitHub knowledge collaboration for agent harnesses",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "bin": { "superwiki": "./src/cli.mjs" },
+  "files": ["src", "assets", "README.md", "docs/superwiki-mvp-design.md"],
+  "scripts": { "test": "node --test" },
+  "dependencies": { "smol-toml": "1.9.1" }
+}

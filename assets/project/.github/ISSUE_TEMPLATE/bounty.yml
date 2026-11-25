@@ -1,0 +1,26 @@
+name: SuperWiki Bounty
+description: Ask the team for a specific missing fact, procedure, or piece of evidence.
+title: "Bounty: "
+labels: ["sw:bounty"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What knowledge is missing and where will it be used?
+    validations:
+      required: true
+  - type: textarea
+    id: attempts
+    attributes:
+      label: What you checked
+      description: Point to relevant Wiki pages, files, and shareable evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: Describe the answer or evidence that would resolve the Bounty.
+    validations:
+      required: true

@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "statusMessage": "SuperWiki project context", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "statusMessage": "SuperWiki member prompt", "timeout": 10 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "statusMessage": "SuperWiki member reply", "timeout": 10 }] }]
+  }
+}

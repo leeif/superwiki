@@ -1,0 +1,4 @@
+/.superwiki/
+/.codex/hooks.json
+/.agents/skills/superwiki-member/
+/.agents/skills/superwiki-curator/
